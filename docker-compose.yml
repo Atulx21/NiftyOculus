@@ -1,0 +1,119 @@
+# Services: postgres (warehouse), pipeline (on-demand Python/Spark/dbt), Airflow.
+# Streamlit is added in Phase 6.
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  image: niftyoculus-airflow
+  env_file: .env
+  environment:
+    POSTGRES_HOST: postgres
+    DBT_PROJECT_DIR: /opt/airflow/project/dbt
+    DBT_PROFILES_DIR: /opt/airflow/project/dbt
+    JDBC_JAR: /opt/jars/postgresql.jar
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    AIRFLOW__WEBSERVER__WORKERS: "1"   # keep memory low
+  user: "0:0"   # run as root so it can write to the bind-mounted data/ folder on WSL2
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./:/opt/airflow/project
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15.10
+    container_name: niftyoculus-postgres
+    env_file: .env
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Scripts in this folder run once, on first start of an empty volume.
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+
+  # Runs Python stages on demand:  docker compose run --rm pipeline python -m ...
+  # 'profiles' keeps it from starting with `up`.
+  pipeline:
+    build:
+      context: .
+      dockerfile: docker/pipeline/Dockerfile
+    profiles: ["tools"]
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      DBT_PROJECT_DIR: /app/dbt
+      DBT_PROFILES_DIR: /app/dbt
+    working_dir: /app
+    volumes:
+      - ./:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 2g
+
+  # ---- Airflow (LocalExecutor: tasks run inside the scheduler container) ----
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "airflow db migrate &&
+      (airflow users create --username $${AIRFLOW_ADMIN_USER} --password $${AIRFLOW_ADMIN_PASSWORD}
+      --firstname Admin --lastname User --role Admin --email admin@example.com || true)"
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    mem_limit: 1280m
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    mem_limit: 2500m   # Spark runs inside this container, so it needs more headroom
+
+  # ---- Streamlit dashboard (Phase 6) ----
+  streamlit:
+    build:
+      context: .
+      dockerfile: docker/streamlit/Dockerfile
+    command: streamlit run /app/app/Home.py --server.port 8501 --server.address 0.0.0.0 --browser.gatherUsageStats false
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./app:/app/app
+      - ./common:/app/common
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 512m
+
+volumes:
+  pgdata:
+
