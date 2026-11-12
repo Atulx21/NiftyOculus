@@ -1,0 +1,20 @@
+name: niftyoculus
+version: "1.0.0"
+config-version: 2
+profile: niftyoculus
+
+# tickers.csv is shared with the ingestion step, so it is used directly as a seed.
+seed-paths: ["../ingestion"]
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+seeds:
+  niftyoculus:
+    +schema: silver
+
+models:
+  niftyoculus:
+    +schema: gold
+    +materialized: table
+

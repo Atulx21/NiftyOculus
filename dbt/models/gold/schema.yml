@@ -1,0 +1,169 @@
+version: 2
+
+seeds:
+  - name: tickers
+    description: Static list of the Nifty 50 stocks (ticker, company, sector).
+
+models:
+  - name: dim_stock
+    description: One row per Nifty 50 stock with its company name and sector.
+    columns:
+      - name: ticker
+        description: Yahoo Finance ticker with .NS suffix, e.g. TCS.NS.
+        data_tests: [unique, not_null]
+      - name: symbol
+        description: Ticker without the .NS suffix, e.g. TCS.
+      - name: company
+        description: Company name.
+      - name: sector
+        description: Sector name.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Automobile
+                  - Capital Goods
+                  - Construction
+                  - Construction Materials
+                  - Consumer Durables
+                  - Consumer Services
+                  - Fast Moving Consumer Goods
+                  - Financial Services
+                  - Healthcare
+                  - Information Technology
+                  - Metals & Mining
+                  - Oil Gas & Consumable Fuels
+                  - Power
+                  - Services
+                  - Telecommunication
+
+  - name: dim_date
+    description: Calendar table, one row per day between the first and last trading date.
+    columns:
+      - name: date_day
+        description: The calendar date.
+        data_tests: [unique, not_null]
+      - name: day_of_week
+        description: ISO weekday, 1 = Monday ... 7 = Sunday.
+      - name: is_weekend
+        description: True for Saturday and Sunday.
+
+  - name: fact_daily_prices
+    description: Daily OHLCV prices, one row per ticker per trading day. Built incrementally.
+    data_tests:
+      - valid_ohlc
+      - unique_combination:
+          columns: [ticker, trade_date]
+    columns:
+      - name: ticker
+        description: Stock ticker (foreign key to dim_stock).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_stock')
+                field: ticker
+      - name: trade_date
+        description: Trading date (foreign key to dim_date).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: open
+        description: Opening price in INR.
+      - name: high
+        description: Highest price of the day in INR.
+      - name: low
+        description: Lowest price of the day in INR.
+      - name: close
+        description: Closing price in INR.
+        data_tests: [not_null]
+      - name: adj_close
+        description: Close adjusted for splits and dividends.
+      - name: volume
+        description: Number of shares traded.
+
+  - name: daily_returns
+    description: Daily percentage change in close versus the previous trading day.
+    columns:
+      - name: ticker
+        description: Stock ticker.
+      - name: trade_date
+        description: Trading date.
+      - name: close
+        description: Closing price in INR.
+      - name: prev_close
+        description: Previous trading day's close.
+      - name: daily_return
+        description: close / prev_close - 1, as a fraction (0.01 = 1 percent). NULL on a ticker's first day.
+
+  - name: moving_averages
+    description: 20-day and 50-day simple moving averages of the close.
+    columns:
+      - name: ticker
+        description: Stock ticker.
+      - name: trade_date
+        description: Trading date.
+      - name: close
+        description: Closing price in INR.
+      - name: ma_20
+        description: Average close of the last 20 trading days (NULL until 20 days exist).
+      - name: ma_50
+        description: Average close of the last 50 trading days (NULL until 50 days exist).
+
+  - name: volatility
+    description: Rolling 20-day volatility of daily returns.
+    columns:
+      - name: ticker
+        description: Stock ticker.
+      - name: trade_date
+        description: Trading date.
+      - name: daily_return
+        description: Daily return as a fraction.
+      - name: volatility_20d
+        description: Standard deviation of the last 20 daily returns (NULL until 20 returns exist).
+
+  - name: top_gainers_losers_daily
+    description: The 5 biggest gainers and 5 biggest losers for every trading day.
+    columns:
+      - name: trade_date
+        description: Trading date.
+      - name: ticker
+        description: Stock ticker.
+      - name: company
+        description: Company name.
+      - name: sector
+        description: Sector name.
+      - name: close
+        description: Closing price in INR.
+      - name: daily_return
+        description: Daily return as a fraction.
+      - name: rank_type
+        description: Either gainer or loser.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [gainer, loser]
+      - name: rank
+        description: 1 = biggest gainer (or biggest loser) of the day.
+
+  - name: sector_performance_daily
+    description: Average return and total volume per sector per trading day.
+    data_tests:
+      - unique_combination:
+          columns: [trade_date, sector]
+    columns:
+      - name: trade_date
+        description: Trading date.
+      - name: sector
+        description: Sector name.
+      - name: stocks
+        description: Number of stocks in the sector with a return that day.
+      - name: avg_return
+        description: Average daily return of the sector's stocks, as a fraction.
+      - name: total_volume
+        description: Total shares traded across the sector's stocks.
+

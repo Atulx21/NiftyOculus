@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: silver
+    schema: silver
+    description: Cleaned prices written by the PySpark job.
+    tables:
+      - name: daily_prices
+        description: One row per ticker per trading day (cleaned, deduplicated).
+        data_tests:
+          - valid_ohlc
+          - unique_combination:
+              columns: [ticker, trade_date]
+        columns:
+          - name: ticker
+            data_tests: [not_null]
+          - name: trade_date
+            data_tests: [not_null]
+
